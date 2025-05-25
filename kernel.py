@@ -1,0 +1,142 @@
+### Fill in the following information before submitting
+# Group id: 45
+# Members: Yash Pathak, Lawrence Tep, Caleb Yang
+
+
+
+from collections import deque
+
+# PID is just an integer, but it is used to make it clear when a integer is expected to be a valid PID.
+PID = int
+
+# This class represents the PCB of processes.
+# It is only here for your convinience and can be modified however you see fit.
+class PCB:
+    pid: PID
+    # Priority is also just an integer, but it is used to make it clear when a integer is expected to be a valid priority.
+    priority: int
+    
+    def __init__(self, pid: PID, priority: int = 32):
+        self.pid = pid
+        self.priority = priority
+
+# This class represents the Kernel of the simulation.
+# The simulator will create an instance of this object and use it to respond to syscalls and interrupts.
+# DO NOT modify the name of this class or remove it.
+class Kernel:
+    scheduling_algorithm: str
+    ready_queue: deque[PCB]
+    waiting_queue: deque[PCB]
+    running: PCB
+    idle_pcb: PCB
+
+    # Called before the simulation begins.
+    # Use this method to initilize any variables you need throughout the simulation.
+    # DO NOT rename or delete this method. DO NOT change its arguments.
+    def __init__(self, scheduling_algorithm: str):
+        self.scheduling_algorithm = scheduling_algorithm
+        self.ready_queue = deque()
+        self.waiting_queue = deque()
+        self.idle_pcb = PCB(0)
+        self.running = self.idle_pcb
+        # Dictionary to keep track of all processes by PID
+        self.processes = {0: self.idle_pcb}
+
+    # This method is triggered every time a new process has arrived.
+    # new_process is this process's PID.
+    # priority is the priority of new_process.
+    # DO NOT rename or delete this method. DO NOT change its arguments.
+    def new_process_arrived(self, new_process: PID, priority: int) -> PID:
+        # Update pcb with new process and priority
+        # If the new process has a higher priority than the current running process, it should be added to the front of the queue.
+        new_pcb = PCB(new_process, priority)
+        self.ready_queue.append(new_pcb)
+
+        
+        # Decide whether to preempt the current process or not.
+        # If the current process is idle, we should always preempt it.
+        # If the scheduling algorithm is FCFS, we should not preempt it.
+        # If the scheduling algorithm is Priority, we should preempt it if the new process has a higher priority than the current process.
+        if self.running == self.idle_pcb:
+            # Always preempt the idle process
+            self.running = self.choose_next_process()
+        
+        elif self.scheduling_algorithm == "Priority" and self.is_higher_priority(new_pcb, self.running):
+            # Put the current running process back in the queue
+            self.ready_queue.append(self.running)
+            # Choose the next process to run (which should be the higher priority one)
+            self.running = self.choose_next_process()
+
+        return self.running.pid
+    
+    
+    # Helper function to check if a process has a higher priority than another process.
+    def is_higher_priority(self, new_process: PCB, current_process: PCB) -> bool:
+        # Higher priority is represented by a lower number.
+        # In case of a tie, the process with the lower PID gets priority
+        if new_process.priority < current_process.priority:
+            return True
+        elif new_process.priority == current_process.priority and new_process.pid < current_process.pid:
+            return True
+        return False
+
+    # This method is triggered every time the current process performs an exit syscall.
+    # DO NOT rename or delete this method. DO NOT change its arguments.
+    def syscall_exit(self) -> PID:
+        self.running = self.choose_next_process()
+        
+        return self.running.pid
+
+    # This method is triggered when the currently running process requests to change its priority.
+    # DO NOT rename or delete this method. DO NOT change its arguments.
+    def syscall_set_priority(self, new_priority: int) -> PID:
+        # Update the priority of the running process
+        self.running.priority = new_priority
+        
+        # For Priority scheduling, we need to check if we should preempt
+        if self.scheduling_algorithm == "Priority":
+            # Save the current running process
+            current = self.running
+            
+            # See if there's a higher priority process in the ready queue
+            highest_priority = None
+            for process in self.ready_queue:
+                if highest_priority is None or self.is_higher_priority(process, highest_priority):
+                    highest_priority = process
+            
+            # If there's a process with higher priority, preempt
+            if highest_priority and self.is_higher_priority(highest_priority, current):
+                self.ready_queue.remove(highest_priority)
+                self.ready_queue.append(current)
+                self.running = highest_priority
+        
+        return self.running.pid
+
+
+    # This is where you can select the next process to run.
+    # This method is not directly called by the simulator and is purely for your convinience.
+    # Feel free to modify this method as you see fit.
+    # It is not required to actually use this method but it is recommended.
+    def choose_next_process(self):
+        if not self.ready_queue:
+            return self.idle_pcb
+
+        if self.scheduling_algorithm == "FCFS":
+            return self.ready_queue.popleft()
+        
+        elif self.scheduling_algorithm == "Priority":
+            # Find the process with the highest priority (lowest priority number)
+            highest_priority_process = None
+            
+            for process in self.ready_queue:
+                if highest_priority_process is None or self.is_higher_priority(process, highest_priority_process):
+                    highest_priority_process = process
+            
+            # Remove it from the ready queue and return it
+            if highest_priority_process:
+                self.ready_queue.remove(highest_priority_process)
+                return highest_priority_process
+            
+            return self.idle_pcb
+        
+
