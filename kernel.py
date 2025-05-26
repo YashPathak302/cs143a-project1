@@ -42,6 +42,10 @@ class Kernel:
         # Dictionary to keep track of all processes by PID
         self.processes = {0: self.idle_pcb}
         self.logger = logger
+        
+        # for Round Robin scheduling, use a time quantum of 40 microseconds
+        self.time_quantum = 40  # microseconds
+        self.time_slice_remaining = self.time_quantum
 
     # This method is triggered every time a new process has arrived.
     # new_process is this process's PID.
@@ -68,14 +72,22 @@ class Kernel:
         if self.running == self.idle_pcb:
             # Always preempt the idle process
             self.running = self.choose_next_process()
+            # For Round Robin scheduling, we need to reset the time slice for the new process
+            self.time_slice_remaining = self.time_quantum
         
         elif self.scheduling_algorithm == "Priority" and self.is_higher_priority(new_pcb, self.running):
             # Put the current running process back in the queue
             self.ready_queue.append(self.running)
             # Choose the next process to run (which should be the higher priority one)
             self.running = self.choose_next_process()
+            # For Round Robin scheduling, we need to reset the time slice for the new process
+            self.time_slice_remaining = self.time_quantum
+        
+        elif self.scheduling_algorithm == "RR":
+            # No priority, just Round Robin — new process joins queue, continue current
+            pass
 
-        return self.running.pid
+        return self.running.pid if self.running is not None else None
     
     
     # Helper function to check if a process has a higher priority than another process.
@@ -92,7 +104,8 @@ class Kernel:
     # DO NOT rename or delete this method. DO NOT change its arguments.
     def syscall_exit(self) -> PID:
         self.running = self.choose_next_process()
-        
+        # For round robin scheduling, we need to reset the time slice for the new process
+        self.time_slice_remaining = self.time_quantum
         return self.running.pid
 
     # This method is triggered when the currently running process requests to change its priority.
@@ -146,6 +159,13 @@ class Kernel:
                 return highest_priority_process
             
             return self.idle_pcb
+        
+        elif self.scheduling_algorithm == "RR":
+            # Round Robin: FIFO order
+            return self.ready_queue.popleft()
+        
+        # Default fallback
+        return self.idle_pcb
     
     
     # This method is triggered when the currently running process requests to initialize a new semaphore.
@@ -189,4 +209,23 @@ class Kernel:
     # Do not use real time to track how much time has passed as time is simulated.
 	# DO NOT rename or delete this method. DO NOT change its arguments.
     def timer_interrupt(self) -> PID:
+        if self.running == self.idle_pcb:
+            return self.running.pid
+    
+        # Deduct 10μs from the current process's quantum
+        self.time_slice_remaining -= 10
+
+        # If the process still has time, it continues running
+        if self.time_slice_remaining > 0:
+            return self.running.pid
+
+        # Otherwise, time quantum expired — preempt and switch
+        self.ready_queue.append(self.running)
+
+        # Choose the next process
+        self.running = self.choose_next_process()
+
+        # Reset the time slice for the new running process
+        self.time_slice_remaining = self.time_quantum
+
         return self.running.pid
