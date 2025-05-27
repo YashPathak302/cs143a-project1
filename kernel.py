@@ -42,7 +42,11 @@ class Kernel:
         # Dictionary to keep track of all processes by PID
         self.processes = {0: self.idle_pcb}
         self.logger = logger
-        
+
+        # stores semaphore_id mapped to its value and processes
+        self.semaphores = {}  # {semaphore_id: {"value": int, "queue": deque[PCB]}}
+
+
         # for Round Robin scheduling, use a time quantum of 40 microseconds
         self.time_quantum = 40  # microseconds
         self.time_slice_remaining = self.time_quantum
@@ -171,18 +175,43 @@ class Kernel:
     # This method is triggered when the currently running process requests to initialize a new semaphore.
     # DO NOT rename or delete this method. DO NOT change its arguments.
     def syscall_init_semaphore(self, semaphore_id: int, initial_value: int):
-        return
-
+        self.semaphores[semaphore_id] = {
+            "value": initial_value,
+            "queue": deque()
+        }
 
     # This method is triggered when the currently running process calls p() on an existing semaphore.
 	# DO NOT rename or delete this method. DO NOT change its arguments.
     def syscall_semaphore_p(self, semaphore_id: int) -> PID:
+        sem = self.semaphores[semaphore_id]
+        sem["value"] -= 1
+
+        if sem["value"] < 0: # block
+            sem["queue"].append(self.running)
+            self.running = self.choose_next_process()
+            return self.running.pid
+
+        # Continue running current process
         return self.running.pid
 
 
     # This method is triggered when the currently running process calls v() on an existing semaphore.
 	# DO NOT rename or delete this method. DO NOT change its arguments.
     def syscall_semaphore_v(self, semaphore_id: int) -> PID:
+        sem = self.semaphores[semaphore_id]
+        sem["value"] += 1
+
+        if sem["value"] <= 0 and sem["queue"]:
+            if self.scheduling_algorithm == "FCFS" or self.scheduling_algorithm == "RR":
+                # Unblock MINIMUM PID
+                unblocked = min(sem["queue"], key = lambda p: p.pid)
+            elif self.scheduling_algorithm == "Priority":
+                # Unblock highest priority (min used because 1 is highest)
+                unblocked = min(sem["queue"], key=lambda p: (p.priority, p.pid))
+
+            sem["queue"].remove(unblocked)
+            self.ready_queue.append(unblocked)
+
         return self.running.pid
 
 
