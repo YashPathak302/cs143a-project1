@@ -204,13 +204,18 @@ class Kernel:
 
         if sem["value"] <= 0 and sem["queue"]:
             if self.scheduling_algorithm == "FCFS" or self.scheduling_algorithm == "RR":
-                # Unblock MINIMUM PID
                 unblocked = min(sem["queue"], key = lambda p: p.pid)
             elif self.scheduling_algorithm == "Priority":
-                # Unblock highest priority (min used because 1 is highest)
-                unblocked = min(sem["queue"], key=lambda p: (p.priority, p.pid))
+                unblocked = min(sem["queue"], key = lambda p: (p.priority, p.pid))
 
             sem["queue"].remove(unblocked)
+
+            if self.scheduling_algorithm == "Priority" and unblocked:
+                if unblocked.priority < self.running.priority:
+                    self.ready_queue.append(self.running)
+                    self.running = unblocked
+                    return self.running.pid
+
             self.ready_queue.append(unblocked)
 
         return self.running.pid
