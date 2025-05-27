@@ -2,8 +2,6 @@
 # Group id: 45
 # Members: Yash Pathak, Lawrence Tep, Caleb Yang
 
-
-
 from collections import deque
 
 # PID is just an integer, but it is used to make it clear when a integer is expected to be a valid PID.
@@ -45,6 +43,9 @@ class Kernel:
 
         # stores semaphore_id mapped to its value and processes
         self.semaphores = {}  # {semaphore_id: {"value": int, "queue": deque[PCB]}}
+
+        # stores mutex_id mapped to whether it's locked, its owner, and its processes
+        self.mutexes = {} # {mutex_id: {"locked": bool, "owner": PID, "queue": deque[PCB]}}
 
 
         # for Round Robin scheduling, use a time quantum of 40 microseconds
@@ -218,18 +219,51 @@ class Kernel:
     # This method is triggered when the currently running process requests to initialize a new mutex.
 	# DO NOT rename or delete this method. DO NOT change its arguments.
     def syscall_init_mutex(self, mutex_id: int):
-        return
+        self.mutexes[mutex_id] = {
+            "locked": False,
+            "owner": None,
+            "queue": deque()
+        }
 
 
     # This method is triggered when the currently running process calls lock() on an existing mutex.
 	# DO NOT rename or delete this method. DO NOT change its arguments.
     def syscall_mutex_lock(self, mutex_id: int) -> PID:
+        mutex = self.mutexes[mutex_id]
+
+        if not mutex["locked"]: # This mutex is available
+            mutex["locked"] = True
+            mutex["owner"] = self.running.pid
+            return self.running.pid
+
+        # Otherwise, block the current process
+        mutex["queue"].append(self.running)
+        self.running = self.choose_next_process()
         return self.running.pid
 
 
     # This method is triggered when the currently running process calls unlock() on an existing mutex.
 	# DO NOT rename or delete this method. DO NOT change its arguments.
     def syscall_mutex_unlock(self, mutex_id: int) -> PID:
+        mutex = self.mutexes[mutex_id]
+
+        # if not the owner, cannot unlock.
+        if mutex["owner"] != self.running.pid:
+            return self.running.pid  # silently ignore
+
+        # I'm the owner, so continue to unlock.
+        mutex["locked"] = False
+        mutex["owner"] = None
+
+        if mutex["queue"]: # Ensures queue has at least 1 process in it
+            if self.scheduling_algorithm == "FCFS" or self.scheduling_algorithm == "RR":
+                next_process = min(mutex["queue"], key = lambda p: p.pid)
+            elif self.scheduling_algorithm == "Priority":
+                next_process = min(mutex["queue"], key = lambda p: (p.priority, p.pid))
+
+            mutex["queue"].remove(next_process)
+            self.ready_queue.append(next_process)
+
         return self.running.pid
 
 
