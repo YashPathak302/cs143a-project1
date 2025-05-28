@@ -196,6 +196,7 @@ class Kernel:
         
         elif self.scheduling_algorithm == "RR":
             # Round Robin: FIFO order
+            self.time_slice_remaining = self.time_quantum
             return self.ready_queue.popleft()
         
         elif self.scheduling_algorithm == "Multilevel":
@@ -241,7 +242,7 @@ class Kernel:
         sem = self.semaphores[semaphore_id]
         sem["value"] -= 1
 
-        if sem["value"] < 0: # Can't grab a semaphore, so block this process
+        if sem["value"] < 0: # block
             sem["queue"].append(self.running)
             self.running = self.choose_next_process()
             return self.running.pid
@@ -256,7 +257,6 @@ class Kernel:
         sem = self.semaphores[semaphore_id]
         sem["value"] += 1
 
-        # Checks if there are any processes waiting in the queue
         if sem["value"] <= 0 and sem["queue"]:
             if self.scheduling_algorithm == "FCFS" or self.scheduling_algorithm == "RR":
                 unblocked = min(sem["queue"], key = lambda p: p.pid)
@@ -265,7 +265,6 @@ class Kernel:
 
             sem["queue"].remove(unblocked)
 
-            # Ready to run the next process based on priority
             if self.scheduling_algorithm == "Priority" and unblocked:
                 if unblocked.priority < self.running.priority:
                     self.ready_queue.append(self.running)
@@ -315,14 +314,14 @@ class Kernel:
         mutex["owner"] = None
 
         if mutex["queue"]:  # If any processes are waiting
-            if self.scheduling_algorithm == "FCFS" or self.scheduling_algorithm == "RR":
+            if self.scheduling_algorithm in ["FCFS", "RR"]:
                 next_process = min(mutex["queue"], key = lambda p: p.pid)
             elif self.scheduling_algorithm == "Priority":
                 next_process = min(mutex["queue"], key = lambda p: (p.priority, p.pid))
 
             mutex["queue"].remove(next_process)
 
-            # Give mutex to next process directly
+            # Give mutex to next process
             mutex["locked"] = True
             mutex["owner"] = next_process.pid
 
@@ -363,7 +362,6 @@ class Kernel:
                     self.foreground_queue.appendleft(self.running)
                     self.current_level = "Background"
                     self.level_time_elapsed = 0
-                    self.time_slice_remaining = self.time_quantum
                     self.running = self.choose_next_process()
                 elif self.current_level == "Background" and self.foreground_queue:
                     self.logger.log(f"Switching to foreground queue from background")
@@ -390,6 +388,7 @@ class Kernel:
                 return self.running.pid
 
             # Otherwise, time quantum expired — preempt and switch
+            self.logger.log("Time quantum")
             self.ready_queue.append(self.running)
             
             
