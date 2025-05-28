@@ -373,18 +373,18 @@ class Kernel:
             
             # after 200, switch
             if self.level_time_elapsed >= self.level_switch_interval:
+                if self.relapse_flag == True:
+                    self.logger.log("Using relapse flag")
+                    self.temp_time = self.time_quantum
+                    self.relapse_flag = False
+                else:
+                    self.logger.log("Using remaining time")
+                    self.temp_time = self.time_slice_remaining
                 if self.current_level == "Foreground" and self.background_queue:
                     self.logger.log(f"Switching to background queue from foreground")
                     self.foreground_queue.appendleft(self.running)
                     self.current_level = "Background"
                     self.level_time_elapsed = 0
-                    if self.relapse_flag == True:
-                        self.logger.log("Using relapse flag")
-                        self.temp_time = self.time_quantum
-                        self.relapse_flag = False
-                    else:
-                        self.logger.log("Using remaining time")
-                        self.temp_time = self.time_slice_remaining
                     self.running = self.choose_next_process()
                 elif self.current_level == "Background" and self.foreground_queue:
                     self.logger.log(f"Switching to foreground queue from background")
