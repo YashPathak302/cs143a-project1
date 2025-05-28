@@ -252,25 +252,32 @@ class Kernel:
     def syscall_mutex_unlock(self, mutex_id: int) -> PID:
         mutex = self.mutexes[mutex_id]
 
-        # if not the owner, cannot unlock.
         if mutex["owner"] != self.running.pid:
             return self.running.pid  # silently ignore
 
-        # I'm the owner, so continue to unlock.
         mutex["locked"] = False
         mutex["owner"] = None
 
-        if mutex["queue"]: # Ensures queue has at least 1 process in it
-            if self.scheduling_algorithm == "FCFS" or self.scheduling_algorithm == "RR":
+        if mutex["queue"]:  # If any processes are waiting
+            if self.scheduling_algorithm in ["FCFS", "RR"]:
                 next_process = min(mutex["queue"], key = lambda p: p.pid)
             elif self.scheduling_algorithm == "Priority":
                 next_process = min(mutex["queue"], key = lambda p: (p.priority, p.pid))
 
             mutex["queue"].remove(next_process)
+
+            # Give mutex to next process
+            mutex["locked"] = True
+            mutex["owner"] = next_process.pid
+
+            if self.scheduling_algorithm == "Priority" and next_process.priority < self.running.priority:
+                self.ready_queue.append(self.running)
+                self.running = next_process
+                return self.running.pid
+
             self.ready_queue.append(next_process)
 
         return self.running.pid
-
 
     # This function represents the hardware timer interrupt.
 	# It is triggered every 10 microseconds and is the only way a kernel can track passing time.
