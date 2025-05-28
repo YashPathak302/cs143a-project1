@@ -381,21 +381,22 @@ class Kernel:
                 return self.running.pid
                 
             # Deduct 10μs from the current process's quantum
-            self.time_slice_remaining -= 10
+            if self.scheduling_algorithm == "RR":
+                self.time_slice_remaining -= 10
 
-            # If the process still has time, it continues running
-            if self.time_slice_remaining > 0:
-                return self.running.pid
+                # If the process still has time, it continues running
+                if self.time_slice_remaining > 0:
+                    return self.running.pid
 
-            # Otherwise, time quantum expired — preempt and switch
-            self.logger.log("Time quantum")
-            self.ready_queue.append(self.running)
-            
-            
-            # Choose the next process
-            self.running = self.choose_next_process()
+                # Otherwise, time quantum expired — preempt and switch
+                self.logger.log("Time quantum")
+                self.ready_queue.append(self.running)
+                
+                
+                # Choose the next process
+                self.running = self.choose_next_process()
 
-            # Reset the time slice for the new running process
-            self.time_slice_remaining = self.time_quantum
+                # Reset the time slice for the new running process
+                self.time_slice_remaining = self.time_quantum
 
             return self.running.pid
