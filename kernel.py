@@ -13,10 +13,12 @@ class PCB:
     pid: PID
     # Priority is also just an integer, but it is used to make it clear when a integer is expected to be a valid priority.
     priority: int
+    process_type: str
     
-    def __init__(self, pid: PID, priority: int = 32):
+    def __init__(self, pid: PID, priority: int = 32, process_type: str = "Foreground"):
         self.pid = pid
         self.priority = priority
+        self.process_type = process_type
 
 # This class represents the Kernel of the simulation.
 # The simulator will create an instance of this object and use it to respond to syscalls and interrupts.
@@ -27,7 +29,8 @@ class Kernel:
     waiting_queue: deque[PCB]
     running: PCB
     idle_pcb: PCB
-
+    foreground_queue: deque[PCB]
+    background_queue: deque[PCB]
     # Called before the simulation begins.
     # Use this method to initilize any variables you need throughout the simulation.
     # DO NOT rename or delete this method. DO NOT change its arguments.
@@ -51,6 +54,15 @@ class Kernel:
         # for Round Robin scheduling, use a time quantum of 40 microseconds
         self.time_quantum = 40  # microseconds
         self.time_slice_remaining = self.time_quantum
+        
+        # for multilevel 
+        self.foreground_queue = deque()  # For RR scheduling
+        self.background_queue = deque()  # For FCFS scheduling
+        self.foreground_time_slice = 40  # RR time slice
+
+        self.current_level = "Foreground"
+        self.level_time_elapsed = 0
+        self.level_switch_interval = 200  # microseconds
 
     # This method is triggered every time a new process has arrived.
     # new_process is this process's PID.
@@ -61,8 +73,18 @@ class Kernel:
         # Update pcb with new process and priority
         # If the new process has a higher priority than the current running process, it should be added to the front of the queue.
         self.logger.log(f"Ready queue len:{len(self.ready_queue)} when process {new_process} arrived")
-        new_pcb = PCB(new_process, priority)
+        new_pcb = PCB(new_process, priority, process_type)
         self.ready_queue.append(new_pcb)
+        
+        #check if new process is foreground or background
+        if self.scheduling_algorithm == "Multilevel":
+            if new_pcb.process_type == "Foreground":
+                self.logger.log(f"Placing in foreground queue: {new_process}")
+                self.foreground_queue.append(new_pcb)
+            else: 
+                self.logger.log(f"Placing in background queue: {new_process}")
+                self.background_queue.append(new_pcb)
+                
         
         # for bookkeeping (optional)
         # self.processes[new_process] = new_pcb
@@ -77,6 +99,8 @@ class Kernel:
         if self.running == self.idle_pcb:
             # Always preempt the idle process
             self.running = self.choose_next_process()
+            self.current_level = self.running.process_type
+            self.level_time_elapsed = 0
             # For Round Robin scheduling, we need to reset the time slice for the new process
             self.time_slice_remaining = self.time_quantum
         
@@ -144,9 +168,14 @@ class Kernel:
     # Feel free to modify this method as you see fit.
     # It is not required to actually use this method but it is recommended.
     def choose_next_process(self):
-        if not self.ready_queue:
-            return self.idle_pcb
-
+        self.logger.log(f"Choosing next process")
+        if self.scheduling_algorithm != "Multilevel":
+            if not self.ready_queue:
+                return self.idle_pcb
+        else:
+            if not self.foreground_queue and not self.background_queue:
+                return self.idle_pcb
+        
         if self.scheduling_algorithm == "FCFS":
             return self.ready_queue.popleft()
         
@@ -168,6 +197,31 @@ class Kernel:
         elif self.scheduling_algorithm == "RR":
             # Round Robin: FIFO order
             return self.ready_queue.popleft()
+        
+        elif self.scheduling_algorithm == "Multilevel":
+            if self.current_level == "Foreground": # Foreground
+                if self.foreground_queue:
+                    self.time_slice_remaining = self.time_quantum
+                    temp = self.foreground_queue.popleft()
+                else:
+                    self.current_level = "Background"
+                    self.level_time_elapsed = 0
+                    self.logger.log("Switching from foreground to background")
+                    temp = self.background_queue.popleft()
+                    
+                self.logger.log(f"Foreground popping {temp.pid}")
+                return temp
+            else: # Background
+                if self.background_queue:
+                    temp = self.background_queue.popleft()
+                else:
+                    self.current_level = "Foreground"
+                    self.level_time_elapsed = 0
+                    self.logger.log("Switching from background to foreground")
+                    temp = self.foreground_queue.popleft()
+                    
+                self.logger.log(f"Background popping {temp.pid}")
+                return temp
         
         # Default fallback
         return self.idle_pcb
@@ -284,23 +338,63 @@ class Kernel:
     # Do not use real time to track how much time has passed as time is simulated.
 	# DO NOT rename or delete this method. DO NOT change its arguments.
     def timer_interrupt(self) -> PID:
-        if self.running == self.idle_pcb:
+        if self.scheduling_algorithm == "Multilevel":
+            self.level_time_elapsed += 10
+            self.logger.log(f"[TIMER] Level: {self.current_level}, Running: {self.running.pid}")
+            if self.current_level == "Foreground":
+                self.time_slice_remaining -= 10
+                
+                if self.time_slice_remaining <= 0:
+                # Enqueue current to end and rotate RR
+                    self.logger.log(f"PID {self.running.pid} out of time slice")
+                    if self.level_time_elapsed >= self.level_switch_interval:
+                        self.foreground_queue.append(self.running)
+                        self.running = self.choose_next_process()
+                    else:
+                        self.foreground_queue.append(self.running) 
+                        self.running = self.choose_next_process()
+            
+            # after 200, switch
+            if self.level_time_elapsed >= self.level_switch_interval:
+                if self.current_level == "Foreground" and self.background_queue:
+                    self.logger.log(f"Switching to background queue from foreground")
+                    self.foreground_queue.appendleft(self.running)
+                    self.current_level = "Background"
+                    self.level_time_elapsed = 0
+                    self.time_slice_remaining = self.time_quantum
+                    self.running = self.choose_next_process()
+                elif self.current_level == "Background" and self.foreground_queue:
+                    self.logger.log(f"Switching to foreground queue from background")
+                    self.background_queue.appendleft(self.running)
+                    self.current_level = "Foreground"
+                    self.level_time_elapsed = 0
+                    self.time_slice_remaining = self.time_quantum
+                    self.running = self.choose_next_process()
+                else:
+                    self.logger.log(f"Remaining in queue")
+                    self.level_time_elapsed = 0
+                    
             return self.running.pid
-    
-        # Deduct 10μs from the current process's quantum
-        self.time_slice_remaining -= 10
+                
+        else:
+            if self.running == self.idle_pcb:
+                return self.running.pid
+                
+            # Deduct 10μs from the current process's quantum
+            self.time_slice_remaining -= 10
 
-        # If the process still has time, it continues running
-        if self.time_slice_remaining > 0:
+            # If the process still has time, it continues running
+            if self.time_slice_remaining > 0:
+                return self.running.pid
+
+            # Otherwise, time quantum expired — preempt and switch
+            self.ready_queue.append(self.running)
+            
+            
+            # Choose the next process
+            self.running = self.choose_next_process()
+
+            # Reset the time slice for the new running process
+            self.time_slice_remaining = self.time_quantum
+
             return self.running.pid
-
-        # Otherwise, time quantum expired — preempt and switch
-        self.ready_queue.append(self.running)
-
-        # Choose the next process
-        self.running = self.choose_next_process()
-
-        # Reset the time slice for the new running process
-        self.time_slice_remaining = self.time_quantum
-
-        return self.running.pid
